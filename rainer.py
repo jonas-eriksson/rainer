@@ -49,7 +49,7 @@ running = True
 # Settings for the joystick
 axisUpDown = 1                          # Joystick axis to read for up / down position
 axisUpDownInverted = False              # Set this to True if up and down appear to be swapped
-axisLeftRight = 2                       # Joystick axis to read for left / right position
+axisLeftRight = 0                       # Joystick axis to read for left / right position
 axisLeftRightInverted = True           # Set this to True if left and right appear to be swapped
 buttonResetEpo = 3                      # Joystick button number to perform an EPO reset (Start)
 buttonSlow = 8                          # Joystick button number for driving slowly whilst held (L2)
@@ -63,6 +63,10 @@ buttonCircle = 13
 buttonCross = 14
 buttonSquare = 15
 
+buttonDL = 7
+buttonDR = 5
+buttonDU = 4
+buttonDD = 6
 
 # Power settings
 voltageIn = 12.0                        # Total battery voltage to the PicoBorg Reverse
@@ -130,12 +134,32 @@ class Blinker(threading.Thread):
                 try:
                     logging.debug('BLINK!')
                     time.sleep(10)
-                    subprocess.call('../8x8matrixscroll/matrix 1 112 5 &', shell=True) 
+                    subprocess.call('../8x8matrixscroll/matrix 1 113 5 &', shell=True) 
                     #print("BLINK!")
                 finally:
                     # Reset the event
                     self.event.clear()
 
+class Serverer(threading.Thread):
+    def __init__(self):
+        super(Serverer,self).__init__()
+        self.event = threading.Event()
+        self.terminated = False
+        logging.debug('Starting Serverer')
+        self.start()
+
+    def run(self):
+        while not self.terminated:
+            #if self.event.wait(5):
+                try:
+                    #logging.debug('BLINK!')
+                    #time.sleep(10)
+                    httpServer.handle_request()
+                    #subprocess.call('../8x8matrixscroll/matrix 1 113 5 &', shell=True) 
+                    #print("BLINK!")
+                finally:
+                    # Reset the event
+                    self.event.clear()
 
 
 
@@ -350,16 +374,16 @@ print 'Initializing eyes..'
 display = Matrix8x8.Matrix8x8()
 
 # Initialize the display. Must be called once before using the display.
-display.begin()
+#display.begin()
 
 # Clear the display buffer.
-display.clear()
+#display.clear()
 # Draw the buffer to the display hardware.
-display.write_display()
+#display.write_display()
 
 # Set led matrices to sleep mode at the beginning
 #drawEyes(display,eyesleep,0.1)
-subprocess.call('../8x8matrixscroll/matrix 1 112 0', shell=True)
+subprocess.call('../8x8matrixscroll/matrix 1 113 0', shell=True)
 time.sleep(0.5)
 
 print 'Initializing head servos..'
@@ -465,11 +489,11 @@ time.sleep(0.5)
 #os.system('./matrix.sh')
 #os.system(' ../8x8matrixscroll/matrix 1 112 2')
 #call("ls", "-la")
-drawEyes(display,eyeopen,0.0)
+#drawEyes(display,eyeopen,0.0)
 
 
 
-#subprocess.call('../8x8matrixscroll/matrix 1 112 1 &', shell=True)
+subprocess.call('../8x8matrixscroll/matrix 1 113 1 &', shell=True)
 time.sleep(0.5)
 pwm.setPWMFreq(60)  
 pwm.setPWM(1, 0, 500) # tilt servo
@@ -498,7 +522,7 @@ time.sleep(2)
 captureThread = ImageCapture()
 
 print 'Starting Blinker'
-#blinker = Blinker()
+blinker = Blinker()
 
 
 print 'Setup the watchdog'
@@ -511,12 +535,18 @@ SocketServer.TCPServer.allow_reuse_address = True
 
 # Run the web server until we are told to close
 httpServer = SocketServer.TCPServer(("0.0.0.0", webPort), WebServer)
+
+serverer = Serverer()
 try:
     print 'Press CTRL+C to terminate the web-server'
     headPan = 0
     headTilt = 0
     driveLeft = 0.0
     driveRight = 0.0
+    driveLeftD = 0.0
+    driveRightD = 0.0 
+    oldLeftD = 0.0
+    oldRightD = 0.0        
     running = True
     hadEvent = False
     circleReleased = False
@@ -526,7 +556,7 @@ try:
     # Loop indefinitely
     while running:
         #print 'httpserver'
-        httpServer.handle_request()
+        #httpServer.handle_request()
         # Get the latest events from the system
         hadEvent = False
         circleReleased = False
@@ -540,6 +570,8 @@ try:
                 # User exit
                 running = False
             elif event.type == pygame.JOYBUTTONDOWN:
+            	button = event.button
+            	print("Button {} on".format(button))
                 # A button on the joystick just got pushed down
             	if joystick.get_button(buttonCircle):
 					#print 'Circle pressed!'
@@ -561,8 +593,63 @@ try:
 					#print 'Cross pressed! (not used)'
 					os.system('espeak -a40 -k1 -g5 -p10 -s160 -v en-scottish -w out.wav "Lotta!" && sudo aplay -q out.wav')					
 					hadEvent = True
+            	if joystick.get_button(buttonDU):
+					print 'D pad up pressed!'
+					driveRightD = 0.75 #PBR.SetMotor1(0.75)
+					driveLeftD = 0.75 #PBR.SetMotor2(-0.75)			
+					hadEvent = True
+            
+            	if joystick.get_button(buttonDD):
+					print 'D pad down pressed!'
+					driveRightD = -0.75 #PBR.SetMotor1(-0.75)
+					driveLeftD = -0.75 #PBR.SetMotor2(0.75)			
+					hadEvent = True
 
-                    
+            	if joystick.get_button(buttonDL):
+					print 'D pad left pressed!'
+					oldRightD = driveRightD
+					oldLeftD = driveLeftD
+					driveRightD = -0.75 #PBR.SetMotor1(-0.75)
+					driveLeftD = 0.75 #PBR.SetMotor2(-0.75)			
+					hadEvent = True
+
+            	if joystick.get_button(buttonDR):
+					print 'D pad right pressed!'
+					oldRightD = driveRightD
+					oldLeftD = driveLeftD
+					driveRightD = 0.75 #PBR.SetMotor1(0.75)
+					driveLeftD = -0.75 #PBR.SetMotor2(0.75)			
+					hadEvent = True
+
+
+            elif event.type == pygame.JOYBUTTONUP:
+            	button = event.button
+            	print("Button {} off".format(button))
+            	if button == buttonDU:
+					print 'D pad up released!'
+					driveRightD = 0 #PBR.SetMotor1(0)
+					driveLeftD = 0 #PBR.SetMotor2(0)			
+					hadEvent = True
+
+            	elif button == buttonDD:
+					print 'D pad down released!'
+					driveRightD = 0 #PBR.SetMotor1(0)
+					driveLeftD = 0 #PBR.SetMotor2(0)			
+					hadEvent = True
+
+            	elif button == buttonDR:
+					print 'D pad down released!'
+					driveRightD = oldRightD #PBR.SetMotor1(0)
+					driveLeftD = oldLeftD #PBR.SetMotor2(0)			
+					hadEvent = True
+            	
+            	elif button == buttonDL:
+					print 'D pad down released!'
+					driveRightD = oldRightD #PBR.SetMotor1(0)
+					driveLeftD = oldLeftD #PBR.SetMotor2(0)			
+					hadEvent = True
+
+        
             elif event.type == pygame.JOYAXISMOTION:
                 # A joystick has been moved
                 hadEvent = True
@@ -612,12 +699,12 @@ try:
                     pwm.setPWM(1, 0, int(headTilt))
                     #print 'headPan value: %f' % (headPan)
                     #print 'headTilt value: %f' % (headTilt)
-                else:
-		# Set the motors to the new speeds
-                    PBR.SetMotor1(driveRight * maxPower)
-               # print 'RSPEED: %f' % (driveRight)
-                    PBR.SetMotor2(-driveLeft * maxPower)
-               # print 'LSPEED: %f' % (-driveLeft)
+                #else:
+		    # Set the motors to the new speeds
+            PBR.SetMotor1(driveRightD * maxPower)
+                    #print 'RSPEED: %f' % (driveRightD)
+            PBR.SetMotor2(-driveLeftD * maxPower)
+                    #print 'LSPEED: %f' % (-driveLeftD)
         # Change the LED to reflect the status of the EPO latch
         PBR.SetLed(PBR.GetEpo())
         # Wait for the interval period
@@ -641,23 +728,26 @@ running = False
 captureThread.join()
 processor.terminated = True
 watchdog.terminated = True
-#blinker.terminated = True
+blinker.terminated = True
+serverer.terminated = True
 processor.join()
 watchdog.join()
-#blinker.join()
+blinker.join()
+serverer.join()
 del camera
 print 'Web-server terminated.'
 PBR.MotorsOff()
+time.sleep(0.5)
 print 'Shutting down Rainer..'
-#subprocess.call('../8x8matrixscroll/matrix 1 112 0 &', shell=True)
-drawEyes(display,eyesleep, 0.1)
-time.sleep(1)
+subprocess.call('../8x8matrixscroll/matrix 1 113 0', shell=True)
+#drawEyes(display,eyesleep, 0.1)
+time.sleep(0.5)
 pwm.softwareReset()
 time.sleep(1)
     
 #display.animate([Image.new("RGB", (8, 8)),Image.new("RGB", (8, 8))],0.5)
 # Clear the display buffer.
-display.clear()
+#display.clear()
 # Draw the buffer to the display hardware.
-display.write_display()
+#display.write_display()
 
