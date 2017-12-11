@@ -21,6 +21,8 @@ import random
 import logging
 import tty
 import termios
+import stravalib #sudo pip install stravalib
+import math
 
 from PIL import Image
 from PIL import ImageDraw
@@ -34,6 +36,15 @@ logging.basicConfig(level=logging.INFO,
                     format='[%(levelname)s] (%(threadName)-10s) %(message)s',
                     )
 
+
+
+### Init Strava
+client = stravalib.client.Client(access_token="c28df4f8b86b35411424c4c46ae04b8b52a59d44") # replace this with your Strava API key
+
+
+
+### Yearly km goal for Strava
+goal = 5000.0
 
 
 # Settings for the web-page
@@ -88,7 +99,7 @@ pyVideo = False
 enableJoy = False
 
 eyenimator_cycle = False
-eyeAnim = False
+eyeAnim = True
 
 # Power settings
 voltageIn = 12.0                        # Total battery voltage to the PicoBorg Reverse
@@ -110,6 +121,25 @@ heart2=[0b00000000, 0b01100110, 0b11111111, 0b11111111, 0b01111110, 0b00111100, 
 
 # Re-direct our output to standard error, we need to ignore standard out to hide some nasty print statements from pygame
 sys.stdout = sys.stderr
+
+
+
+def sortby(item):
+    return item.start_date
+
+def getstravadistance():
+    global totaldistance
+    totaldistance = 0
+    activitiesthisyear = client.get_activities(after="2017-01-01T00:00:00Z", limit=500) # Download all activities this year
+
+    for activity in activitiesthisyear:
+        if activity.type=="Ride":
+        #print(activity.type)
+            totaldistance += float(stravalib.unithelper.kilometers(activity.distance)) #add up the total distance
+
+
+
+
 
 
 
@@ -463,12 +493,10 @@ def readkey(getchar_fn=None):
 
 ################################################################################
 blinkt.set_clear_on_exit(True)
-
 blinkt.set_pixel(0,255, 0, 0)
-
 blinkt.show()
 
-
+getstravadistance()
 
 lcd = AdafruitLcd()
 lcd.backlight(True)
@@ -758,8 +786,15 @@ time.sleep(0.5)
 
 blinkt.clear()
 blinkt.show()
+time.sleep(0.1)
 
-for i in range (255,0,-1):
+
+blinkt.set_all(0, 255, 0)
+blinkt.show()
+time.sleep(1)
+
+
+for i in range (255,0,-2):
     blinkt.set_all(0, i, 0)
     blinkt.show()
     time.sleep(0.005)
@@ -833,6 +868,14 @@ try:
                     #print(cmd)
                     #subprocess.call(cmd, shell=True)
                     hadEvent = True
+
+                if key == pygame.K_c:
+                    # Construct a line to call
+                    cmd = ["espeak -a60 -k1 -g5 -p10 -s160 -v swedish -w out.wav \"" "Du har cyclat " + str(totaldistance) + " kilometer och har " + str(goal-totaldistance) + " kilometer kvar. Latbanan." "\" && aplay -q out.wav"]
+                    #print(cmd)
+                    subprocess.call(cmd, shell=True)
+                    hadEvent = True
+
 
 
                 if key == pygame.K_TAB:
