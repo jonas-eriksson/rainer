@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# coding: Latin-1
+# -*- coding: utf-8 -*-
 
 
 # Creates a web-page interface for DiddyBorg
@@ -32,6 +32,21 @@ from RpiLcdBackpack import AdafruitLcd
 #import include
 import blinkt
 
+import ultraborg.UltraBorg as uborg
+
+
+
+
+autonomous = False
+pyVideo = False
+enableJoy = False
+eyenimator_cycle = False
+eyeAnim = True
+
+
+
+
+
 logging.basicConfig(level=logging.INFO,
                     format='[%(levelname)s] (%(threadName)-10s) %(message)s',
                     )
@@ -44,7 +59,10 @@ client = stravalib.client.Client(access_token="c28df4f8b86b35411424c4c46ae04b8b5
 
 
 ### Yearly km goal for Strava
-goal = 5000.0
+goal = 4000.0
+
+
+
 
 
 # Settings for the web-page
@@ -62,6 +80,7 @@ global camera
 global processor
 global running
 global watchdog
+
 running = True
 
 # Settings for the joystick
@@ -74,7 +93,8 @@ buttonSlow = 8                          # Joystick button number for driving slo
 slowFactor = 0.5                        # Speed to slow to when the drive slowly button is held, e.g. 0.5 would be half speed
 buttonFastTurn = 9                      # Joystick button number for turning fast (R2)
 buttonSelect = 0                        # Operating mode select (Select)
-interval = 0.00                         # Time between updates in seconds, smaller responds faster but uses more processor time
+interval = 0.10                         # Time between updates in seconds, smaller responds faster but uses more processor time
+autointerval = 0.20
 
 buttonArm = 10                          # Hold to control arm (L1)
 rightAxisUpDown = 3
@@ -92,14 +112,6 @@ buttonDU = 4
 buttonDD = 6
 
 
-autonomous = False
-
-pyVideo = False
-
-enableJoy = False
-
-eyenimator_cycle = False
-eyeAnim = True
 
 # Power settings
 voltageIn = 12.0                        # Total battery voltage to the PicoBorg Reverse
@@ -119,8 +131,41 @@ heart2=[0b00000000, 0b01100110, 0b11111111, 0b11111111, 0b01111110, 0b00111100, 
 
 
 
+sinusSquareLut=[
+  0,0,0,0,1,2,
+  5,8,12,17,24,31,
+  40,49,60,71,82,93,
+  105,116,126,136,145,153,
+  160,166,171,174,177,179,
+  180,180,180,180
+]
+
+
+
 # Re-direct our output to standard error, we need to ignore standard out to hide some nasty print statements from pygame
 sys.stdout = sys.stderr
+
+
+
+
+
+### Ultrasonic
+global lfdist
+global rfdist
+global reardist
+lfdist = 0.0
+rfdist = 0.0
+reardist = 0.0
+distanceMin = 100.0             # Minimum distance in mm, corresponds to Rainer reversing at 100%
+distanceMax = 300.0             # Maximum distance in mm, corresponds to Rainer driving at 100%
+
+# Calculate our divisor
+distanceDiv = (distanceMax - distanceMin) / 2.0
+
+
+
+# Start the UltraBorg
+UB = uborg.UltraBorg()      # Create a new UltraBorg object
 
 
 
@@ -129,8 +174,26 @@ def sortby(item):
 
 def getstravadistance():
     global totaldistance
+    global diststatus
     totaldistance = 0
-    activitiesthisyear = client.get_activities(after="2017-01-01T00:00:00Z", limit=500) # Download all activities this year
+    diststatus = 0
+    activitiesthisyear = client.get_activities(after="2019-01-01T00:00:00Z", limit=500) # Download all activities this year
+
+    ### Today
+    today = datetime.date.today()
+
+    ### Last day of year
+    endDate = datetime.date(2018, 12, 31)
+
+    ### Days left in curruent year
+    daysLeft = float((endDate - today).days)
+
+    ### Days elapsed
+    daysdone = 365.0 - daysLeft
+
+    requiredPace = goal/365.0
+
+
 
     for activity in activitiesthisyear:
         if activity.type=="Ride":
@@ -138,6 +201,9 @@ def getstravadistance():
             totaldistance += float(stravalib.unithelper.kilometers(activity.distance)) #add up the total distance
 
 
+    currentpace = totaldistance/daysdone
+    reqpacedist = daysdone*requiredPace
+    diststatus = round(float(totaldistance-reqpacedist),2)
 
 
 
@@ -186,6 +252,55 @@ class Blinker(threading.Thread):
                     if (eyenimator_cycle == False):
                         subprocess.call('../8x8matrixscroll/matrix 1 113 5 &', shell=True) 
                     #print("BLINK!")
+                finally:
+                    # Reset the event
+                    self.event.clear()
+
+
+
+class Distreader(threading.Thread):
+    def __init__(self):
+        super(Distreader,self).__init__()
+        self.event = threading.Event()
+        self.terminated = False
+        logging.debug('Starting Distreader')
+        self.start()
+
+    def run(self):
+        while not self.terminated:
+            #if self.event.wait(5):
+                try:
+                    time.sleep(1)
+                    # Read all four ultrasonic values
+                    #usm1 = UB.GetRawDistance1()
+                    lfdist = UB.GetRawDistance2()
+                    rfdist = UB.GetRawDistance3()
+                    reardist = UB.GetRawDistance4()
+                    
+                    # Convert to the nearest millimeter
+                    #usm1 = int(usm1)
+                    #lfdist = int(lfdist)
+                    #rfdist = int(rfdist)
+                    #readdist = int(reardist)
+                    
+
+                    if lfdist == 0:
+                        print 'left: No reading'
+                    else:
+                        print 'left % 4d mm' % (lfdist)
+                    if rfdist == 0:
+                        print 'right: No reading'
+                    else:
+                        print 'right % 4d mm' % (rfdist)
+                    if reardist == 0:
+                       print 'rear: No reading'
+                    else:
+                       print 'rear % 4d mm' % (reardist)
+                    #print 'left % 4d mm' % (lfdist)
+                    #print 'right % 4d mm' % (rfdist)
+                    #print 'rear % 4d mm' % (reardist)
+                    #logging.debug('BLINK!')                   
+
                 finally:
                     # Reset the event
                     self.event.clear()
@@ -498,6 +613,7 @@ blinkt.show()
 
 getstravadistance()
 
+'''
 lcd = AdafruitLcd()
 lcd.backlight(True)
 lcd.blink(False)
@@ -509,7 +625,7 @@ time.sleep(1)
 
 lcd.setCursor(0,1)
 lcd.message(" Initializing.. ")
-
+'''
 
 blinkt.set_pixel(1,255, 0, 0)
 blinkt.show()
@@ -589,7 +705,7 @@ wristMax = 600
 
 
 
-
+speed = 0.50
 
 
 print 'Initializing motor control..'
@@ -678,12 +794,22 @@ if enableJoy == True:
 
 
 print('koira')
-## Read lines from file
-lines = [line.strip('\n') for line in open('lines_se.txt')]
-logging.debug('Phrases in text file: %d' % len(lines))
+
+## Read lotta lines from file
+lines_l = [line.strip('\n') for line in open('lines_l.txt')]
+logging.debug('Phrases in Lotta text file: %d' % len(lines_l))
+
+## Read general lines from file
+lines_g = [line.strip('\n') for line in open('lines_g.txt')]
+logging.debug('Phrases in Lotta text file: %d' % len(lines_g))
+
+## Read howdy ho lines from file
+lines_h = [line.strip('\n') for line in open('lines_h.txt')]
+logging.debug('Phrases in Lotta text file: %d' % len(lines_h))
 
 
 
+UB.Init()    # Set the board up (checks the board is connected)
 
 
 # Wake up sequence - open eyes and raise head (tilt)
@@ -747,6 +873,11 @@ if pyVideo:
     serverer = Serverer()
 
 
+## Start ultrasonic distance read
+#distreader = Distreader()
+
+
+
 #print 'Starting Blinker'
 
 ## Start eye animators
@@ -775,9 +906,9 @@ handVal = handOCStart
 wristVal = wristStart
 blinkt.set_pixel(7,255, 0, 0)
 blinkt.show()
-pwm.setPWM(5, 0, int(elbowUDVal))
+pwm.setPWM(15, 0, int(elbowUDVal))
 time.sleep(0.5)
-pwm.setPWM(2, 0, int(elbowIOVal))
+pwm.setPWM(3, 0, int(elbowIOVal))
 time.sleep(0.5)
 pwm.setPWM(7, 0, int(handVal))
 time.sleep(0.5)
@@ -801,14 +932,15 @@ for i in range (255,0,-2):
 #time.sleep(3)
 
 #lcd.clear()
-lcd.setCursor(0,1)
-lcd.message("     Ready!     ")
+#lcd.setCursor(0,1)
+#lcd.message("     Ready!     ")
 blinkt.clear()
 blinkt.show()
 
 try:
     if pyVideo:
         print 'Press CTRL+C to terminate the web-server'
+    autospeed = 0.0
     headPan = 0
     headTilt = 0
     driveLeft = 0.0
@@ -832,352 +964,446 @@ try:
         hadEvent = False
         circleReleased = False
         triangleReleased = False
-        phrasenum = random.randrange(len(lines))
+        phrasenum_l = random.randrange(len(lines_l))
+        phrasenum_g = random.randrange(len(lines_g))
+        phrasenum_h = random.randrange(len(lines_h))
         events = pygame.event.get()
         #print 'post event get'
         # Handle each event individually
-        for event in events:
-            if event.type == pygame.QUIT:
-                # User exit
-                running = False
-            elif event.type == pygame.KEYDOWN:
-                key = event.key
-                logging.debug("Button {} on".format(key))
-                # A button on the joystick just got pushed down
-
-                if key == pygame.K_ESCAPE:
+        if autonomous:
+            # Read distances
+            lfdist = UB.GetRawDistance2()
+            rfdist = UB.GetRawDistance3()
+            reardist = UB.GetRawDistance4()
+            # Convert to the nearest millimeter
+            lfdist = int(lfdist)
+            rfdist = int(rfdist)
+            reardist = int(reardist)
+            # Determine the speed of DiddyBorg based on the distance readings
+            if lfdist != 0:
+                autospeed = ((lfdist - distanceMin) / distanceDiv) - 1.0
+                if autospeed > 1.0:
+                    autospeed = 1.0
+                elif autospeed < -1.0:
+                    autospeed = -1.0
+            driveLeft = autospeed
+            driveRight = autospeed
+            # Set our new speed
+            PBR.SetMotor1(driveRight * maxPower*0.75)
+            PBR.SetMotor2(-driveLeft * maxPower*0.75)
+            #print 'Rainer in autonomous mode'
+            for event in events:
+                if event.type == pygame.QUIT:
+                    # User exit
                     running = False
+                elif event.type == pygame.KEYDOWN:
+                    key = event.key
+                    logging.debug("Button {} on".format(key))
+                    # A button on the joystick just got pushed down
+                    if key == pygame.K_TAB:
+                        if (autonomous):
+                            PBR.MotorsOff()
+                            #lcd.setCursor(0,1)
+                            #lcd.message("Mode: manual    ")
+                            autonomous = False
+                        else:
+                            autonomous = True							
+                            #lcd.setCursor(0,1)
+                            #lcd.message("Mode: autonomous")
+                        hadEvent = True
+            # Wait for the interval period
+            time.sleep(autointerval)
+        ## Manual mode
+        else:
+            for event in events:
+                if event.type == pygame.QUIT:
+                    # User exit
+                    running = False
+                elif event.type == pygame.KEYDOWN:
+                    key = event.key
+                    logging.debug("Button {} on".format(key))
+                    # A button on the joystick just got pushed down
 
-                if key == pygame.K_l:
-                    # Construct a line to call
-                    cmd = ["espeak -a60 -k1 -g5 -p10 -s160 -v swedish -w out.wav \"" + lines[phrasenum] + "\" && aplay -q out.wav"]
-                    #print(cmd)
-                    subprocess.call(cmd, shell=True)
-                    hadEvent = True
+                    if key == pygame.K_ESCAPE:
+                        running = False
 
-                if key == pygame.K_j:
-                    # Construct a line to call
-                    os.system('espeak -a40 -k1 -g5 -p10 -s160 -v swedish -w out.wav "Lotta. Du får köpa en lederjacka om du vill." && aplay -q out.wav')
-                    #print(cmd)
-                    #subprocess.call(cmd, shell=True)
-                    hadEvent = True
+                    if key == pygame.K_l:
+                        # Construct a line to call
+                        cmd = ["espeak -a60 -k1 -g5 -p10 -s160 -v swedish -w out.wav \"" + lines_l[phrasenum_l] + "\" && aplay -q out.wav"]
+                        #print(cmd)
+                        subprocess.call(cmd, shell=True)
+                        hadEvent = True
 
-                if key == pygame.K_k:
-                    # Construct a line to call
-                    os.system('espeak -a40 -k1 -g5 -p10 -s160 -v swedish -w out.wav "Lotta. Vill du ha kaffe nu?." && aplay -q out.wav')
-                    #print(cmd)
-                    #subprocess.call(cmd, shell=True)
-                    hadEvent = True
+                    if key == pygame.K_g:
+                        # Construct a line to call
+                        cmd = ["espeak -a60 -k1 -g5 -p10 -s160 -v swedish -w out.wav \"" + lines_g[phrasenum_g] + "\" && aplay -q out.wav"]
+                        #print(cmd)
+                        subprocess.call(cmd, shell=True)
+                        hadEvent = True
 
-                if key == pygame.K_c:
-                    # Construct a line to call
-                    cmd = ["espeak -a60 -k1 -g5 -p10 -s160 -v swedish -w out.wav \"" "Du har cyclat " + str(totaldistance) + " kilometer och har " + str(goal-totaldistance) + " kilometer kvar. Latbanan." "\" && aplay -q out.wav"]
-                    #print(cmd)
-                    subprocess.call(cmd, shell=True)
-                    hadEvent = True
+                    if key == pygame.K_h:
+                        # Construct a line to call
+                        cmd = ["espeak -a60 -k1 -g5 -p10 -s160 -v swedish -w out.wav \"" + lines_h[phrasenum_h] + "\" && aplay -q out.wav"]
+                        #print(cmd)
+                        subprocess.call(cmd, shell=True)
+                        hadEvent = True
 
 
+                    if key == pygame.K_k:
+                        # Construct a line to call
+                        os.system('espeak -a40 -k1 -g5 -p10 -s160 -v swedish -w out.wav "Lotta. Vill du ha kaffe nu?." && aplay -q out.wav')
+                        #print(cmd)
+                        #subprocess.call(cmd, shell=True)
+                        hadEvent = True
 
-                if key == pygame.K_TAB:
-                    if (autonomous):
-                        lcd.setCursor(0,1)
-                        lcd.message("Mode: manual    ")
-                        autonomous = False
+                    if key == pygame.K_e:
+                        # Construct a line to call
+                        os.system('espeak -a40 -k1 -g5 -p10 -s160 -v en-scottish -w out.wav "Exterminate." && aplay -q out.wav')
+                        hadEvent = True
+
+
+                    if key == pygame.K_u:
+                        elbowUDVal -= 10
+                        print 'elbowUDVal value: %f' % (elbowUDVal)
+                        pwm.setPWM(15, 0, int(elbowUDVal))
+                        hadEvent = True
+
+                    if key == pygame.K_j:
+                        elbowUDVal += 10
+                        print 'elbowUDVal value: %f' % (elbowUDVal)
+                        pwm.setPWM(15, 0, int(elbowUDVal))
+                        hadEvent = True
+
+                    if key == pygame.K_PLUS:
+                        speed += 0.05
+                        if (speed > 1.0):
+                            speed = 1.0
+                        print 'speed = %f' % (speed)
+                        hadEvent = True
+
+                    if key == pygame.K_MINUS:
+                        speed -= 0.05
+                        if (speed < 0.0):
+                            speed = 0.0
+                        print 'speed = %f' % (speed)
+                        hadEvent = True
+
+
+
+
+
+                    if key == pygame.K_c:
+                        # Construct a line to call
+                        if diststatus > 0:
+                            cmd = ["espeak -a60 -k1 -g5 -p10 -s160 -v swedish -w out.wav \"" "Du har cyclat " + str(totaldistance) + " kilometer och har " + str(goal-totaldistance) + " kilometer kvar. Du är " + str(diststatus) + "kilometer i förväg." "\" && aplay -q out.wav"]
+                        else:
+                            cmd = ["espeak -a60 -k1 -g5 -p10 -s160 -v swedish -w out.wav \"" "Du har cyclat " + str(totaldistance) + " kilometer och har " + str(goal-totaldistance) + " kilometer kvar. Du är " + str(abs(diststatus)) + " kilometer efter." "\" && aplay -q out.wav"]
+                        #print(cmd)
+                        subprocess.call(cmd, shell=True)
+                        hadEvent = True
+
+
+
+                    if key == pygame.K_TAB:
+                        if (autonomous):
+                            autonomous = False
+                            #lcd.setCursor(0,1)
+                            #lcd.message("Mode: manual    ")                                                   
+                        else:
+                            autonomous = True							
+                            #lcd.setCursor(0,1)
+                            #lcd.message("Mode: autonomous")
+                        hadEvent = True
+                    if key == pygame.K_r:
+                        #print 'Square pressed! (not used)'
+                        pwm.softwareReset()
+                        pwm = PWM(0x40)
+                        # Set frequency to 60 Hz
+                        pwm.setPWMFreq(60)
+                        os.system('espeak -a40 -k1 -g5 -p10 -s160 -v en-scottish -w out.wav "Hello, Lotta! You look wonderful today!" && aplay -q out.wav')
+                        #os.system('echo "Hello, Lotta!" | sudo festival --tts')
+                        hadEvent = True
+                    if key == pygame.K_s:
+                        subprocess.call('../8x8matrixscroll/matrix 1 113 22 &', shell=True)
+                        os.system('espeak -a40 -k1 -g5 -p10 -s160 -v finnish -w out.wav "Oi maammee Suoo mii synnyinmAA! Sooi saana kuultaai neen! Eei laakso aa aa ee ei kukkUu laa. Ei veettä raa an taa aa rakkaam paa. Kuin koo ti maa tää poh joi neen. Maa kallis roo boot" && aplay -q out.wav')
+                        subprocess.call('../8x8matrixscroll/matrix 1 113 23 &', shell=True)
+                        time.sleep(3.5)
+                        os.system('espeak -a40 -k1 -g5 -p10 -s120 -v finnish -w out.wav "köh köh" && aplay -q out.wav')
+                        time.sleep(0.5)
+                        subprocess.call('../8x8matrixscroll/matrix 1 113 22 &', shell=True)
+                        os.system('espeak -a40 -k1 -g5 -p10 -s120 -v finnish -w out.wav "Ii. siii. Eeeen!" && aplay -q out.wav')
+                        subprocess.call('../8x8matrixscroll/matrix 1 113 24 &', shell=True)
+                        #os.system('echo "Hello, Lotta!" | sudo festival --tts')
+                        hadEvent = True
+
+                    if key == pygame.K_UP:
+                        print 'Key up pressed!'
+                        driveRightD = speed #PBR.SetMotor1(0.75)
+                        driveLeftD = speed #PBR.SetMotor2(-0.75)
+                        hadEvent = True
+
+                    if key == pygame.K_DOWN:
+                        print 'Key down pressed!'
+                        driveRightD = -speed #PBR.SetMotor1(-0.75)
+                        driveLeftD = -speed #PBR.SetMotor2(0.75)
+                        hadEvent = True
+
+                    if key == pygame.K_LEFT:
+                        print 'Key left pressed!'
+                        oldRightD = driveRightD
+                        oldLeftD = driveLeftD
+                        subprocess.call('../8x8matrixscroll/matrix 1 113 4 &', shell=True)
+                        driveRightD = -speed #PBR.SetMotor1(-0.75)
+                        driveLeftD = speed #PBR.SetMotor2(-0.75)
+                        hadEvent = True
+
+                    if key == pygame.K_RIGHT:
+                        print 'Key right pressed!'
+                        oldRightD = driveRightD
+                        oldLeftD = driveLeftD
+                        subprocess.call('../8x8matrixscroll/matrix 1 113 3 &', shell=True)
+                        driveRightD = speed #PBR.SetMotor1(0.75)
+                        driveLeftD = -speed #PBR.SetMotor2(0.75)
+                        hadEvent = True
+
+                elif event.type == pygame.KEYUP:
+                    key = event.key
+                    logging.debug("Button {} off".format(key))
+                    if key == pygame.K_UP:
+                        print 'Key up released!'
+                        driveRightD = 0 #PBR.SetMotor1(0)
+                        driveLeftD = 0 #PBR.SetMotor2(0)
+                        hadEvent = True
+
+                    elif key == pygame.K_DOWN:
+                        print 'Key down released!'
+                        driveRightD = 0 #PBR.SetMotor1(0)
+                        driveLeftD = 0 #PBR.SetMotor2(0)
+                        hadEvent = True
+
+                    elif key == pygame.K_RIGHT:
+                        print 'Key right released!'
+                        subprocess.call('../8x8matrixscroll/matrix 1 113 2 &', shell=True)
+                        driveRightD = oldRightD #PBR.SetMotor1(0)
+                        driveLeftD = oldLeftD #PBR.SetMotor2(0)
+                        hadEvent = True
+
+                    elif key == pygame.K_LEFT:
+                        print 'Key left released!'
+                        subprocess.call('../8x8matrixscroll/matrix 1 113 2 &', shell=True)
+                        driveRightD = oldRightD #PBR.SetMotor1(0)
+                        driveLeftD = oldLeftD #PBR.SetMotor2(0)
+                        hadEvent = True
+
+                elif (event.type == pygame.JOYBUTTONDOWN):
+                    button = event.button
+                    logging.debug("Button {} on".format(button))
+                    # A button on the joystick just got pushed down
+
+                    if joystick.get_button(buttonCircle):
+                        #print 'Circle pressed!'
+                        # Construct a line to call
+                        cmd = ["espeak -a40 -k1 -g5 -p10 -s160 -v swedish -w out.wav \"" + lines[phrasenum] + "\" && aplay -q out.wav"]
+                        #print(cmd)
+                        subprocess.call(cmd, shell=True)
+                        hadJoyEvent = True
+
+
+
+                    if joystick.get_button(buttonSelect):
+                        if (autonomous):
+                            #lcd.setCursor(0,1)
+                            #lcd.message("Mode: manual    ")
+                            autonomous = False
+                        else:
+                            #lcd.setCursor(0,1)
+                            #lcd.message("Mode: autonomous")
+                            autonomous = True
+
+                        #print 'Triangle pressed!'
+                        #os.system('/home/pi/weather-2.2/weather --setpath=/home/pi/weather-2.2 -m efhf | sudo flite -voice rms')
+                        hadJoyEvent = True
+                    if joystick.get_button(buttonTriangle):
+                        #print 'Triangle pressed!'
+                        os.system('espeak -a80 -k1 -g5 -p10 -s190 -v finnish -w out.wav "Hehe. Perjantaiperjantai peerjantai. Perjantaiperjantai peerjantai. Me juodaan kuplavettä kuplavettä kuuplavettä." && aplay -q out.wav')
+
+                        hadJoyEvent = True
+                    if joystick.get_button(buttonSquare):
+                        #print 'Square pressed! (not used)'
+                        pwm.softwareReset()
+                        pwm = PWM(0x40)
+                        # Set frequency to 60 Hz
+                        pwm.setPWMFreq(60)
+                        #os.system('espeak -a40 -k1 -g5 -p10 -s160 -v en-scottish -w out.wav "Hello, Lotta! You look wonderful today!" && sudo aplay -q out.wav')
+                        #os.system('echo "Hello, Lotta!" | sudo festival --tts')
+                        hadJoyEvent = True
+                    if joystick.get_button(buttonCross):
+                        #print 'Cross pressed! (not used)'
+                        #os.system('espeak -a40 -k1 -g5 -p10 -s160 -v swedish -w out.wav "Lotta! Här har du en kex!" && sudo aplay -q out.wav')
+                        #subprocess.call('../8x8matrixscroll/matrix 1 113 9 &', shell=True)
+                        #os.system('espeak -a40 -k1 -g5 -p10 -s140 -v finnish -w out.wav "Paljon onnea, Susanna!" && aplay -q out.wav')
+                        #subprocess.call('../8x8matrixscroll/matrix 1 113 5 &', shell=True)
+                        hadJoyEvent = True
+                    if joystick.get_button(buttonDU):
+                        print 'D pad up pressed!'
+                        driveRightD = 0.75 #PBR.SetMotor1(0.75)
+                        driveLeftD = 0.75 #PBR.SetMotor2(-0.75)
+                        hadJoyEvent = True
+
+                    if joystick.get_button(buttonDD):
+                        print 'D pad down pressed!'
+                        driveRightD = -0.75 #PBR.SetMotor1(-0.75)
+                        driveLeftD = -0.75 #PBR.SetMotor2(0.75)
+                        hadJoyEvent = True
+
+                    if joystick.get_button(buttonDL):
+                        print 'D pad left pressed!'
+                        oldRightD = driveRightD
+                        oldLeftD = driveLeftD
+                        subprocess.call('../8x8matrixscroll/matrix 1 113 4 &', shell=True)
+                        driveRightD = -0.75 #PBR.SetMotor1(-0.75)
+                        driveLeftD = 0.75 #PBR.SetMotor2(-0.75)
+                        hadJoyEvent = True
+
+                    if joystick.get_button(buttonDR):
+                        print 'D pad right pressed!'
+                        oldRightD = driveRightD
+                        oldLeftD = driveLeftD
+                        subprocess.call('../8x8matrixscroll/matrix 1 113 3 &', shell=True)
+                        driveRightD = 0.75 #PBR.SetMotor1(0.75)
+                        driveLeftD = -0.75 #PBR.SetMotor2(0.75)
+                        hadJoyEvent = True
+
+
+                elif event.type == pygame.JOYBUTTONUP:
+                    button = event.button
+                    logging.debug("Button {} off".format(button))
+                    if button == buttonDU:
+                        print 'D pad up released!'
+                        driveRightD = 0 #PBR.SetMotor1(0)
+                        driveLeftD = 0 #PBR.SetMotor2(0)
+                        hadJoyEvent = True
+
+                    elif button == buttonDD:
+                        print 'D pad down released!'
+                        driveRightD = 0 #PBR.SetMotor1(0)
+                        driveLeftD = 0 #PBR.SetMotor2(0)
+                        hadJoyEvent = True
+
+                    elif button == buttonDR:
+                        print 'D pad down released!'
+                        subprocess.call('../8x8matrixscroll/matrix 1 113 2 &', shell=True)
+                        driveRightD = oldRightD #PBR.SetMotor1(0)
+                        driveLeftD = oldLeftD #PBR.SetMotor2(0)
+                        hadJoyEvent = True
+
+                    elif button == buttonDL:
+                        print 'D pad down released!'
+                        subprocess.call('../8x8matrixscroll/matrix 1 113 2 &', shell=True)
+                        driveRightD = oldRightD #PBR.SetMotor1(0)
+                        driveLeftD = oldLeftD #PBR.SetMotor2(0)
+                        hadJoyEvent = True
+
+
+                elif event.type == pygame.JOYAXISMOTION:
+                    # A joystick has been moved
+                    hadJoyEvent = True
+                if hadJoyEvent:
+                    # Read axis positions (-1 to +1)
+                    if leftAxisUpDownInverted:
+                        upDown = -joystick.get_axis(leftAxisUpDown)
+                       # print 'UP/DOWN triggered!\n'
                     else:
-                        lcd.setCursor(0,1)
-                        lcd.message("Mode: autonomous")
-                        autonomous = True
-                                                        
-                    hadEvent = True
-                if key == pygame.K_r:
-                    #print 'Square pressed! (not used)'
-                    pwm.softwareReset()
-                    pwm = PWM(0x40)
-                    # Set frequency to 60 Hz
-                    pwm.setPWMFreq(60)
-                    os.system('espeak -a40 -k1 -g5 -p10 -s160 -v en-scottish -w out.wav "Hello, Lotta! You look wonderful today!" && aplay -q out.wav')
-                    #os.system('echo "Hello, Lotta!" | sudo festival --tts')
-                    hadEvent = True
-                if key == pygame.K_s:
-                    subprocess.call('../8x8matrixscroll/matrix 1 113 22 &', shell=True)
-                    os.system('espeak -a40 -k1 -g5 -p10 -s160 -v finnish -w out.wav "Oi maammee Suoo mii synnyinmAA! Sooi saana kuultaai neen! Eei laakso aa aa ee ei kukkUu laa. Ei veettä raa an taa aa rakkaam paa. Kuin koo ti maa tää poh joi neen. Maa kallis roo boot" && aplay -q out.wav')
-                    subprocess.call('../8x8matrixscroll/matrix 1 113 23 &', shell=True) 
-                    time.sleep(3.5)
-                    os.system('espeak -a40 -k1 -g5 -p10 -s120 -v finnish -w out.wav "köh köh" && aplay -q out.wav')
-                    time.sleep(0.5)
-                    subprocess.call('../8x8matrixscroll/matrix 1 113 22 &', shell=True)
-                    os.system('espeak -a40 -k1 -g5 -p10 -s120 -v finnish -w out.wav "Ii. siii. Eeeen!" && aplay -q out.wav')
-                    subprocess.call('../8x8matrixscroll/matrix 1 113 24 &', shell=True)
-                    #os.system('echo "Hello, Lotta!" | sudo festival --tts')
-                    hadEvent = True
-
-                if key == pygame.K_UP:
-                    print 'Key up pressed!'
-                    driveRightD = 0.75 #PBR.SetMotor1(0.75)
-                    driveLeftD = 0.75 #PBR.SetMotor2(-0.75)            
-                    hadEvent = True
-            
-                if key == pygame.K_DOWN:
-                    print 'Key down pressed!'
-                    driveRightD = -0.75 #PBR.SetMotor1(-0.75)
-                    driveLeftD = -0.75 #PBR.SetMotor2(0.75)            
-                    hadEvent = True
-
-                if key == pygame.K_LEFT:
-                    print 'Key left pressed!'
-                    oldRightD = driveRightD
-                    oldLeftD = driveLeftD
-                    subprocess.call('../8x8matrixscroll/matrix 1 113 4 &', shell=True)
-                    driveRightD = -0.75 #PBR.SetMotor1(-0.75)
-                    driveLeftD = 0.75 #PBR.SetMotor2(-0.75)            
-                    hadEvent = True
-
-                if key == pygame.K_RIGHT:
-                    print 'Key right pressed!'
-                    oldRightD = driveRightD
-                    oldLeftD = driveLeftD
-                    subprocess.call('../8x8matrixscroll/matrix 1 113 3 &', shell=True)
-                    driveRightD = 0.75 #PBR.SetMotor1(0.75)
-                    driveLeftD = -0.75 #PBR.SetMotor2(0.75)            
-                    hadEvent = True
-
-            elif event.type == pygame.KEYUP:
-                key = event.key
-                logging.debug("Button {} off".format(key))
-                if key == pygame.K_UP:
-                    print 'Key up released!'
-                    driveRightD = 0 #PBR.SetMotor1(0)
-                    driveLeftD = 0 #PBR.SetMotor2(0)            
-                    hadEvent = True
-
-                elif key == pygame.K_DOWN:
-                    print 'Key down released!'
-                    driveRightD = 0 #PBR.SetMotor1(0)
-                    driveLeftD = 0 #PBR.SetMotor2(0)            
-                    hadEvent = True
-
-                elif key == pygame.K_RIGHT:
-                    print 'Key right released!'
-                    subprocess.call('../8x8matrixscroll/matrix 1 113 2 &', shell=True)
-                    driveRightD = oldRightD #PBR.SetMotor1(0)
-                    driveLeftD = oldLeftD #PBR.SetMotor2(0)            
-                    hadEvent = True
-                
-                elif key == pygame.K_LEFT:
-                    print 'Key left released!'
-                    subprocess.call('../8x8matrixscroll/matrix 1 113 2 &', shell=True)
-                    driveRightD = oldRightD #PBR.SetMotor1(0)
-                    driveLeftD = oldLeftD #PBR.SetMotor2(0)            
-                    hadEvent = True
-
-            elif (event.type == pygame.JOYBUTTONDOWN):
-                button = event.button
-                logging.debug("Button {} on".format(button))
-                # A button on the joystick just got pushed down
-
-                if joystick.get_button(buttonCircle):
-                    #print 'Circle pressed!'
-                    # Construct a line to call
-                    cmd = ["espeak -a40 -k1 -g5 -p10 -s160 -v swedish -w out.wav \"" + lines[phrasenum] + "\" && aplay -q out.wav"]
-                    #print(cmd)
-                    subprocess.call(cmd, shell=True)
-                    hadJoyEvent = True
-
-
-
-                if joystick.get_button(buttonSelect):
-                    if (autonomous):
-                        lcd.setCursor(0,1)
-                        lcd.message("Mode: manual    ")
-                        autonomous = False
+                        upDown = joystick.get_axis(leftAxisUpDown)
+                        #print 'UP/DOWN value: %f' % (upDown)
+                    if leftAxisLeftRightInverted:
+                        leftRight = -joystick.get_axis(leftAxisLeftRight)
+                        #print 'L/R triggered!\n'
                     else:
-                        lcd.setCursor(0,1)
-                        lcd.message("Mode: autonomous")
-                        autonomous = True
-                                    
-                    #print 'Triangle pressed!'
-                    #os.system('/home/pi/weather-2.2/weather --setpath=/home/pi/weather-2.2 -m efhf | sudo flite -voice rms')                    
-                    hadJoyEvent = True
-                if joystick.get_button(buttonTriangle):
-                    #print 'Triangle pressed!'
-                    #os.system('/home/pi/weather-2.2/weather --setpath=/home/pi/weather-2.2 -m efhf | sudo flite -voice rms')                    
-                    hadJoyEvent = True
-                if joystick.get_button(buttonSquare):
-                    #print 'Square pressed! (not used)'
-                    pwm.softwareReset()
-                    pwm = PWM(0x40)
-                    # Set frequency to 60 Hz
-                    pwm.setPWMFreq(60)
-                    #os.system('espeak -a40 -k1 -g5 -p10 -s160 -v en-scottish -w out.wav "Hello, Lotta! You look wonderful today!" && sudo aplay -q out.wav')
-                    #os.system('echo "Hello, Lotta!" | sudo festival --tts')
-                    hadJoyEvent = True
-                if joystick.get_button(buttonCross):
-                    #print 'Cross pressed! (not used)'
-                    #os.system('espeak -a40 -k1 -g5 -p10 -s160 -v swedish -w out.wav "Lotta! Här har du en kex!" && sudo aplay -q out.wav')    
-                    subprocess.call('../8x8matrixscroll/matrix 1 113 9 &', shell=True)
-                    os.system('espeak -a40 -k1 -g5 -p10 -s140 -v finnish -w out.wav "Paljon onnea, Susanna!" && aplay -q out.wav')    
-                    subprocess.call('../8x8matrixscroll/matrix 1 113 5 &', shell=True)                
-                    hadJoyEvent = True
-                if joystick.get_button(buttonDU):
-                    print 'D pad up pressed!'
-                    driveRightD = 0.75 #PBR.SetMotor1(0.75)
-                    driveLeftD = 0.75 #PBR.SetMotor2(-0.75)            
-                    hadJoyEvent = True
-            
-                if joystick.get_button(buttonDD):
-                    print 'D pad down pressed!'
-                    driveRightD = -0.75 #PBR.SetMotor1(-0.75)
-                    driveLeftD = -0.75 #PBR.SetMotor2(0.75)            
-                    hadJoyEvent = True
+                        leftRight = joystick.get_axis(leftAxisLeftRight)
+                        #print 'L/R value: %f' % (leftRight)
+                    # Apply steering speeds
+                    if not joystick.get_button(buttonFastTurn):
+                        #print 'FAST pressed'
+                        leftRight *= 0.5
+                    # Determine the drive power levels
+                    axisWrist = joystick.get_axis(rightAxisUpDown)
+                    axisElbowIO = -joystick.get_axis(leftAxisLeftRight)
+                    axisElbowUD = joystick.get_axis(leftAxisUpDown)
+                    axisHand = -joystick.get_axis(rightAxisLeftRight)
+                    driveLeft = -upDown
+                    driveRight = -upDown
+                    headPan = (leftRight * (servoMid+75) + servoMax-servoMid+servoMin)
+                    headTilt = (upDown/2 * (servoMid+75) + 500)
 
-                if joystick.get_button(buttonDL):
-                    print 'D pad left pressed!'
-                    oldRightD = driveRightD
-                    oldLeftD = driveLeftD
-                    subprocess.call('../8x8matrixscroll/matrix 1 113 4 &', shell=True)
-                    driveRightD = -0.75 #PBR.SetMotor1(-0.75)
-                    driveLeftD = 0.75 #PBR.SetMotor2(-0.75)            
-                    hadJoyEvent = True
+                    elbowUDVal = elbowUDVal + axisElbowUD*5 #(axisElbowUD/2 * (elbowUDMax+75) + 540) # + elbowUDMax-elbowUDMid+elbowUDMin)
+                    if (elbowUDVal > elbowUDMax):
+                        elbowUDVal = elbowUDMax
+                    elif (elbowUDVal < elbowUDMin):
+                        elbowUDVal = elbowUDMin
+                    elbowIOVal = elbowIOVal + axisElbowIO*2 #(axisElbowIO * (servoMid+75) + servoMax-servoMid+servoMin)
+                    if (elbowIOVal > elbowIOMax):
+                        elbowIOVal = elbowIOMax
+                    elif (elbowIOVal < elbowIOMin):
+                        elbowIOVal = elbowIOMin
+                    #print 'axisHand: %f' % (axisHand)
+                    handVal = handVal - axisHand*5 #(axisHand * (servoMid+75))
+                    #print 'handval_pre: %f' % (handVal)
+                    if (handVal > handOCMax):
+                        handVal = handOCMax
+                    elif (handVal < handOCMin):
+                        handVal = handOCMin
+                    wristVal = wristVal + axisWrist * 5 #(axisWrist * (servoMid+75) + 200)
+                    if (wristVal > wristMax):
+                        wristVal = wristMax
+                    elif (wristVal < wristMin):
+                        wristVal = wristMin
 
-                if joystick.get_button(buttonDR):
-                    print 'D pad right pressed!'
-                    oldRightD = driveRightD
-                    oldLeftD = driveLeftD
-                    subprocess.call('../8x8matrixscroll/matrix 1 113 3 &', shell=True)
-                    driveRightD = 0.75 #PBR.SetMotor1(0.75)
-                    driveLeftD = -0.75 #PBR.SetMotor2(0.75)            
-                    hadJoyEvent = True
+                    #elbowUDMin = 140
+                    #elbowUDMax = 540
+                    #elbowUDMid = (elbowUDMax-elbowUDMin)/2+elbowUDMin
 
-
-            elif event.type == pygame.JOYBUTTONUP:
-                button = event.button
-                logging.debug("Button {} off".format(button))
-                if button == buttonDU:
-                    print 'D pad up released!'
-                    driveRightD = 0 #PBR.SetMotor1(0)
-                    driveLeftD = 0 #PBR.SetMotor2(0)            
-                    hadJoyEvent = True
-
-                elif button == buttonDD:
-                    print 'D pad down released!'
-                    driveRightD = 0 #PBR.SetMotor1(0)
-                    driveLeftD = 0 #PBR.SetMotor2(0)            
-                    hadJoyEvent = True
-
-                elif button == buttonDR:
-                    print 'D pad down released!'
-                    subprocess.call('../8x8matrixscroll/matrix 1 113 2 &', shell=True)
-                    driveRightD = oldRightD #PBR.SetMotor1(0)
-                    driveLeftD = oldLeftD #PBR.SetMotor2(0)            
-                    hadJoyEvent = True
-                
-                elif button == buttonDL:
-                    print 'D pad down released!'
-                    subprocess.call('../8x8matrixscroll/matrix 1 113 2 &', shell=True)
-                    driveRightD = oldRightD #PBR.SetMotor1(0)
-                    driveLeftD = oldLeftD #PBR.SetMotor2(0)            
-                    hadJoyEvent = True
-
-        
-            elif event.type == pygame.JOYAXISMOTION:
-                # A joystick has been moved
-                hadJoyEvent = True
-            if hadJoyEvent:
-                # Read axis positions (-1 to +1)
-                if leftAxisUpDownInverted:
-                    upDown = -joystick.get_axis(leftAxisUpDown)
-                   # print 'UP/DOWN triggered!\n'
-                else:
-                    upDown = joystick.get_axis(leftAxisUpDown)
-                    #print 'UP/DOWN value: %f' % (upDown)
-                if leftAxisLeftRightInverted:
-                    leftRight = -joystick.get_axis(leftAxisLeftRight)
-                    #print 'L/R triggered!\n'
-                else:
-                    leftRight = joystick.get_axis(leftAxisLeftRight)
-                    #print 'L/R value: %f' % (leftRight)
-                # Apply steering speeds
-                if not joystick.get_button(buttonFastTurn):
-                    #print 'FAST pressed'
-                    leftRight *= 0.5
-                # Determine the drive power levels
-                axisWrist = joystick.get_axis(rightAxisUpDown)
-                axisElbowIO = -joystick.get_axis(leftAxisLeftRight)
-                axisElbowUD = joystick.get_axis(leftAxisUpDown)
-                axisHand = -joystick.get_axis(rightAxisLeftRight)
-                driveLeft = -upDown
-                driveRight = -upDown
-                headPan = (leftRight * (servoMid+75) + servoMax-servoMid+servoMin)
-                headTilt = (upDown/2 * (servoMid+75) + 500)
-            
-                elbowUDVal = elbowUDVal + axisElbowUD*5 #(axisElbowUD/2 * (elbowUDMax+75) + 540) # + elbowUDMax-elbowUDMid+elbowUDMin)
-                if (elbowUDVal > elbowUDMax):
-                    elbowUDVal = elbowUDMax
-                elif (elbowUDVal < elbowUDMin):
-                    elbowUDVal = elbowUDMin
-                elbowIOVal = elbowIOVal + axisElbowIO*2 #(axisElbowIO * (servoMid+75) + servoMax-servoMid+servoMin)
-                if (elbowIOVal > elbowIOMax):
-                    elbowIOVal = elbowIOMax
-                elif (elbowIOVal < elbowIOMin):
-                    elbowIOVal = elbowIOMin
-                #print 'axisHand: %f' % (axisHand)
-                handVal = handVal - axisHand*5 #(axisHand * (servoMid+75))
-                #print 'handval_pre: %f' % (handVal)
-                if (handVal > handOCMax):
-                    handVal = handOCMax
-                elif (handVal < handOCMin):
-                    handVal = handOCMin
-                wristVal = wristVal + axisWrist * 5 #(axisWrist * (servoMid+75) + 200)
-                if (wristVal > wristMax):
-                    wristVal = wristMax
-                elif (wristVal < wristMin):
-                    wristVal = wristMin
-
-                #elbowUDMin = 140
-                #elbowUDMax = 540
-                #elbowUDMid = (elbowUDMax-elbowUDMin)/2+elbowUDMin
-
-                if leftRight < -0.05:
-                    # Turning left
-                    driveLeft *= 1.0 + (2.0 * leftRight)
-                    #subprocess.call('../8x8matrixscroll/matrix 1 112 3 &', shell=True)
-                    #headPan = servoMid + (servoMid * leftRight*2)
-                elif leftRight > 0.05:
-                    # Turning right
-                    driveRight *= 1.0 - (2.0 * leftRight)
-                    #subprocess.call('../8x8matrixscroll/matrix 1 112 4 &', shell=True)
-                    #headPan = servoMid - (servoMid * leftRight*2) 
-                # Check for button presses
-                if joystick.get_button(buttonResetEpo):
-                    #print 'RESET pressed'
-                    PBR.ResetEpo()
-                if joystick.get_button(buttonSlow):
-                    #print 'SLOW pressed'
-                    driveLeft *= slowFactor
-                    driveRight *= slowFactor
-                if joystick.get_button(buttonHead):
-                    pwm.setPWM(0, 0, int(headPan))
-                    pwm.setPWM(1, 0, int(headTilt))
-                    #print 'headPan value: %f' % (headPan)
-                if joystick.get_button(buttonArm):
-                    pwm.setPWM(7, 0, int(handVal))
-                    pwm.setPWM(5, 0, int(elbowUDVal))
-                    pwm.setPWM(6, 0, int(wristVal))
-                    pwm.setPWM(2, 0, int(elbowIOVal))
-                    print 'wristVal value: %f' % (wristVal)
-                    print 'axisWrist value: %f' % (axisWrist) 
-                    #print 'axisElbowUD value: %f' % (axisElbowUD)
-                    #print 'headTilt value: %f' % (headTilt)
-                #else:
-            # Set the motors to the new speeds
-            PBR.SetMotor1(driveRightD * maxPower)
-                    #print 'RSPEED: %f' % (driveRightD)
-            PBR.SetMotor2(-driveLeftD * maxPower)
-                    #print 'LSPEED: %f' % (-driveLeftD)
-        # Change the LED to reflect the status of the EPO latch
-        PBR.SetLed(PBR.GetEpo())
-        # Wait for the interval period
-        time.sleep(interval)
+                    if leftRight < -0.05:
+                        # Turning left
+                        driveLeft *= 1.0 + (2.0 * leftRight)
+                        #subprocess.call('../8x8matrixscroll/matrix 1 112 3 &', shell=True)
+                        #headPan = servoMid + (servoMid * leftRight*2)
+                    elif leftRight > 0.05:
+                        # Turning right
+                        driveRight *= 1.0 - (2.0 * leftRight)
+                        #subprocess.call('../8x8matrixscroll/matrix 1 112 4 &', shell=True)
+                        #headPan = servoMid - (servoMid * leftRight*2)
+                    # Check for button presses
+                    if joystick.get_button(buttonResetEpo):
+                        #print 'RESET pressed'
+                        PBR.ResetEpo()
+                    if joystick.get_button(buttonSlow):
+                        #print 'SLOW pressed'
+                        driveLeft *= slowFactor
+                        driveRight *= slowFactor
+                    if joystick.get_button(buttonHead):
+                        pwm.setPWM(0, 0, int(headPan))
+                        pwm.setPWM(1, 0, int(headTilt))
+                        #print 'headPan value: %f' % (headPan)
+                    if joystick.get_button(buttonArm):
+                        pwm.setPWM(7, 0, int(handVal))
+                        pwm.setPWM(15, 0, int(elbowUDVal))
+                        pwm.setPWM(6, 0, int(wristVal))
+                        pwm.setPWM(15, 0, int(elbowIOVal))
+                        print 'wristVal value: %f' % (wristVal)
+                        print 'axisWrist value: %f' % (axisWrist)
+                        #print 'axisElbowUD value: %f' % (axisElbowUD)
+                        #print 'headTilt value: %f' % (headTilt)
+                    #else:
+                # Set the motors to the new speeds
+                PBR.SetMotor1(driveRightD * maxPower)
+                        #print 'RSPEED: %f' % (driveRightD)
+                PBR.SetMotor2(-driveLeftD * maxPower)
+                        #print 'LSPEED: %f' % (-driveLeftD)
+            # Change the LED to reflect the status of the EPO latch
+            PBR.SetLed(PBR.GetEpo())
+            # Wait for the interval period
+            time.sleep(interval)
     # Disable all drives
     PBR.MotorsOff()
 
@@ -1194,13 +1420,13 @@ finally:
     print 'Motors off'
 
 #lcd.clear()
-lcd.setCursor(0,1)
-lcd.message("Shutting down..")
+#lcd.setCursor(0,1)
+#lcd.message("Shutting down..")
 
 # Tell each thread to stop, and wait for them to end
-pwm.setPWM(3, 4095, 0) # clear green status led
-time.sleep(0.5)
-pwm.setPWM(4, 1, 0) # set red status led
+#pwm.setPWM(3, 4095, 0) # clear green status led
+#time.sleep(0.5)
+#pwm.setPWM(4, 1, 0) # set red status led
 running = False
 
 if pyVideo:
@@ -1225,6 +1451,9 @@ if eyeAnim:
 if pyVideo:
     del camera
 
+#distreader.terminated = True
+#distreader.join()
+
 print 'Web-server terminated.'
 PBR.MotorsOff()
 time.sleep(0.5)
@@ -1236,8 +1465,8 @@ pwm.softwareReset()
 time.sleep(1)
 subprocess.call('../8x8matrixscroll/matrix 1 113 8', shell=True)
 
-lcd.clear()   
-lcd.backlight(False)
+#lcd.clear()   
+#lcd.backlight(False)
 #display.animate([Image.new("RGB", (8, 8)),Image.new("RGB", (8, 8))],0.5)
 # Clear the display buffer.
 #display.clear()
