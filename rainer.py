@@ -183,7 +183,7 @@ def getstravadistance():
     today = datetime.date.today()
 
     ### Last day of year
-    endDate = datetime.date(2018, 12, 31)
+    endDate = datetime.date(2019, 12, 31)
 
     ### Days left in curruent year
     daysLeft = float((endDate - today).days)
